@@ -1,0 +1,27 @@
+##### Editors
+
+# VS Code
+.vscode
+
+# Julia
+/docs/Manifest.toml
+Manifest.toml
+/docs/build/
+.ipynb_checkpoints
+
+.github
+
+# R
+.Rhistory
+.Rdata
+
+# Emacs
+*~
+
+# IntelliJ
+.idea
+
+# Secrets
+.env*
+
+
