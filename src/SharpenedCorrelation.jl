@@ -2,17 +2,18 @@ module SharpenedCorrelation
 
 using Parameters: @with_kw
 using Statistics: mean
-using PaddedViews
+using Tullio, TensorCast, PaddedViews
 
-using NNlib, Flux
 using CUDA
 
 using Functors
 using Zygote
+using NNlib, Flux
 using Flux: params
 using Flux: onehotbatch, onecold, flatten
 using Flux.Losses: logitcrossentropy
 using Flux.Data: DataLoader
+
 
 if CUDA.has_cuda()
     @info "CUDA is on"

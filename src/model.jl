@@ -62,15 +62,50 @@ function SharpenedConvolution(in_width, in_height,
                                 out_width, out_height, out_chan)
 end
 
-function block_convolution(W::Array{Float32}, p, q, x_view_centered, x_view_norm)
-    # Average
-    W_mean = sum(W) / length(W)
+function make_view(input_padded, v_w, v_h, k, b)
+    return view(input_padded, v_w:(v_w + k - 1), v_h:(v_h + k - 1), :, b)
+end
+
+"""
+    channels_convolution()
+
+The convolution is carried out simultaneously across all the  channels of the input. How
+the correlation is done channel-wise.
+
+Dimensions W: width x height x in_chan
+Returns:
+"""
+function channels_convolution(W, input_padded, k, p, q, v_w, v_h, out_c, b)
+    in_c = size(input_padded)[end - 1]
+    input_patch = view(input_padded, v_w:(v_w + k - 1), v_h:(v_h + k - 1), 1:in_c, b)
+
+    return patch_convolution(W, input_patch, k, p, q, out_c)
+end
+
+function patch_convolution(W, in_patch, k, p, q, out_c)
+    # Average input values (channel-wise)
+    @tullio patch_mean[in_c] := in_patch[h, w, in_c] / (k * k)
+    @cast patch_centered[h, w, in_c] := in_patch[w, h, in_c] - patch_mean[in_c]
 
     # Second moment adjusted for q
-    W_norm = √sum((W .- W_mean) .^ 2) + DEFAULT_ϵ + q
+    @tullio x_view_norm[in_c] := (in_patch[h, w, in_c] - patch_mean[in_c])^2
+    x_view_norm = Float32(√sum(x_view_norm) + DEFAULT_ϵ + q)
 
+    # Average convolution kernel (channel-wise)
+    W_cur = view(W, :, :, :, out_c)
+    @tullio W_mean[c] := W_cur[w, h, c] / k^2
+    @cast W_centered[h, w, in_c] := W_cur[w, h, in_c] - W_mean[in_c]
+
+    # Second moment adjusted for q
+    @tullio W_norm[c] := (W_cur[w, h, c] - W_mean[c])^2
+    W_norm = Float32(√sum(W_norm) + DEFAULT_ϵ + q)
+
+    # Calculate the sharpened cross-correlation for all channel combinations
+    # No loop to modify single values. Otherwise Zygote complains
+    # Note the transpose of the sum!!! Otherwise mismatch with col extraction
     # Calculate the sharpened cross-correlation
-    sk = sum(x_view_centered .* (W .- W_mean)) / (x_view_norm * W_norm)
+    @tullio sk := patch_centered[w, h, c] * (W_centered[w, h, c]) /
+                  (x_view_norm * W_norm)
 
     # Exponent maps -∞:+∞ to 0:+∞
     return Float32(sign(sk) * (abs(sk))^log(1 + exp(p)))
@@ -97,40 +132,15 @@ function (sc::SharpenedConvolution)(x::AbstractArray{Float32})
                         1:in_c,               # no change along channels
                         1:batch))             # no change along batch
 
-    out_w, out_h, iter_w, iter_h = convolved_dimensions(in_w, in_h, k, s, p)
+    _, _, iter_w, iter_h = convolved_dimensions(in_w, in_h, k, s, p)
 
     # Convolution with stride and padding. It is ignored for the Zygote autodiff since
     # it is a constant.
-    # W: kernel_size x kernel_size x n channels in x n_out
-    result_tensor = zeros(Float32, out_w, out_h, out_c, batch)
+    # W: kernel_size x kernel_size x n channels IN x n channels OUT
+    result_tensor = [channels_convolution(sc.W, x_pad, k, sc.p, sc.q, v_w, v_h, c, b)
+                     for v_h in iter_h, v_w in iter_w, c in 1:out_c, b in 1:batch]
 
-    for (n_w, v_w) in zip(1:out_w, iter_w),
-        (n_h, v_h) in zip(out_h, iter_h),
-        c in 1:in_c,
-        b in 1:batch
-
-        x_view = view(x_pad, v_w:(v_w + k - 1), v_h:(v_h + k - 1), c, batch)
-
-        # Average
-        x_view_mean = sum(x_view) / (k * k * in_c)
-        x_view_centered = x_view .- x_view_mean
-
-        # Second moment adjusted for q
-        x_view_norm = √sum((x_view .- x_view_mean) .^ 2) + DEFAULT_ϵ + sc.q
-
-        # Calculate the sharpened cross-correlation for all channel combinations
-        # No loop to modify single values. Otherwise Zygote complains
-        # Note the transpose of the sum!!! Otherwise mismatch with col extraction
-        SK = [block_convolution(sc.W[:, :, in_c, out_c],
-                                sc.p, sc.q,
-                                x_view_centered, x_view_norm)
-              for in_c in 1:in_c, out_c in 1:out_c]
-
-        result_tensor[n_w, n_h, :, batch] = result_tensor[n_w, n_h, 1:end, batch] .+
-                                            sum(SK; dims=[1])'
-    end
-
-    # Dimensions should be output_x, output_y, n_in, n_out, batch
+    # Dimensions should be output_x, output_y, n_out, batch
     return result_tensor
 end
 
@@ -147,7 +157,6 @@ function SC_Norm_Pool_Block(in_width, in_height, params_in, params_out, batch)
     #     dimensions in:  output_width, output_height, out channels, batch
     #     dimensions out: output_width, output_height, out channels, batch
     #
-
     println("""
                 Creating block with output dimension of the SC layer:
                 width in = $(in_width) x height in $(in_height)
