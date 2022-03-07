@@ -2,7 +2,7 @@ ___WORK IN PROGRESS___
 
 # The Sharpened Cosine Similarity
 
-The Sharpened Cosine Similarity is a modified form of cosine distance that showed over the past few months, thought up by Brandon Rohrer .
+The Sharpened Cosine Similarity is a modified form of cosine distance that recently showed up (thought up by Brandon Rohrer).
 
 [https://www.rpisoni.dev/posts/cossim-convolution/]()
 [https://www.rpisoni.dev/posts/cossim-convolution-part2/]()

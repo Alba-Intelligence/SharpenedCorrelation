@@ -189,6 +189,9 @@ struct HyperParameters
         return new(batchsize, n_classes, n_epochs, n_runs, max_lr, block_params)
     end
 end
+# Specifiy what is trainable (and everything else is a frozen parameter)
+Flux.@functor HyperParameters
+Flux.trainable(hp::HyperParameters) = ()
 
 struct SharpenedCorrelationModel
     model::Any
@@ -201,7 +204,10 @@ struct SharpenedCorrelationModel
         return new(create_sc_model(ps, in_width, in_height), ps, in_width, in_height)
     end
 end
+# Specifiy what is trainable (and everything else is a frozen parameter)
 Flux.@functor SharpenedCorrelationModel
+Flux.trainable(sc::SharpenedCorrelationModel) = ()
+
 
 function (sc::SharpenedCorrelationModel)(x::AbstractArray{Float32})
     return sc.model(x)
