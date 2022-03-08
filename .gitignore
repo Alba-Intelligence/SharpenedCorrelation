@@ -9,6 +9,9 @@ Manifest.toml
 /docs/build/
 .ipynb_checkpoints
 
+temp
+scratchpad*
+
 .github
 
 # R
