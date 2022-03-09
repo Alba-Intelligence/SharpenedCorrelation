@@ -2,13 +2,13 @@ module SharpenedCorrelation
 
 using Parameters: @with_kw
 using Statistics: mean
-using Tullio, TensorCast, PaddedViews
+using Tullio, PaddedViews
 
 using CUDA
 
-using Functors
-using Zygote
-using NNlib, Flux
+# using Functors, TensorCast,
+#using Zygote, NNlib
+using Flux
 using Flux: params
 using Flux: onehotbatch, onecold, flatten
 using Flux.Losses: logitcrossentropy

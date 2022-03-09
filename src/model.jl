@@ -3,7 +3,7 @@ DEFAULT_ϵ = Float32(1e-12)
 # Calculate the size of the result of a convolution and corresponding iterators
 # for the top left coordinates of each convolution.
 function convolved_dimensions(in_width::Integer, in_height::Integer, kernel::Integer,
-                              stride::Integer, padding::Integer)
+    stride::Integer, padding::Integer)
     padded_width = in_width + 2 * padding
     max_width = min(kernel * (padded_width ÷ kernel), padded_width - kernel)
 
@@ -43,9 +43,9 @@ end
     out_chan::Integer = 1
 
     function SharpenedConvolution(W::Array{Float32,4}, p::Float32, q::Float32,
-                                  kernel::Integer, stride::Integer, padding::Integer,
-                                  out_width::Integer, out_height::Integer,
-                                  out_chan::Integer)
+        kernel::Integer, stride::Integer, padding::Integer,
+        out_width::Integer, out_height::Integer,
+        out_chan::Integer)
         @assert kernel > 0 "kernel must be positive"
         @assert stride > 0 "stride must be positive"
         @assert padding >= 0 "padding must be non-negative"
@@ -62,24 +62,24 @@ Flux.trainable(s::SharpenedConvolution) = (s.W, s.p, s.q)
 
 # Constructor
 function SharpenedConvolution(in_width::Integer, in_height::Integer,
-                              in_chan::Integer, out_chan::Integer,
-                              kernel::Integer, stride::Integer, padding::Integer;
-                              p=0.0f0::Float32, q=0.1f0::Float32,
-                              init=Flux.glorot_uniform)
+    in_chan::Integer, out_chan::Integer,
+    kernel::Integer, stride::Integer, padding::Integer;
+    p = 0.0f0::Float32, q = 0.1f0::Float32,
+    init = Flux.glorot_uniform)
 
     # Allocate the result tensor. width and height reflect the number of convolutions over the input
     # accounting for padding and stride.
     out_width, out_height, _, _ = convolved_dimensions(in_width, in_height,
-                                                       kernel, stride, padding)
+        kernel, stride, padding)
 
     return SharpenedConvolution(Float32.(init(kernel, kernel, in_chan, out_chan)),
-                                p, q,
-                                kernel, stride, padding,
-                                out_width, out_height, out_chan)
+        p, q,
+        kernel, stride, padding,
+        out_width, out_height, out_chan)
 end
 
 function make_view(input_padded, v_w, v_h, k, b)
-    return view(input_padded, v_w:(v_w + k - 1), v_h:(v_h + k - 1), :, b)
+    return view(input_padded, v_w:(v_w+k-1), v_h:(v_h+k-1), :, b)
 end
 
 """
@@ -91,45 +91,50 @@ the correlation is done channel-wise.
 Dimensions W: width x height x in_chan
 Returns:
 """
-function channels_convolution(W::Array{Float32}, input_padded, k::Integer,
-                              p::Float32, q::Float32,
-                              v_w::Integer, v_h::Integer, out_c::Integer)
+function channels_convolution(W::Array{Float32}, input_padded::Any, k::Integer,
+    p::Float32, q::Float32,
+    v_w::Integer, v_h::Integer, out_c::Integer)
     batch_size = size(input_padded)[end]
-    input_patch = make_view(input_padded, v_w, v_h, k, batch_size)
+    # input_patch = make_view(input_padded, v_w, v_h, k, batch_size)
+    input_patch = input_padded[v_w:(v_w+k-1), v_h:(v_h+k-1), 1:end, 1:batch_size]
 
+    println("Size W: $(size(W))  --  Size input_patch: $(size(input_patch))")
     return patch_convolution(W, input_patch, k, p, q, out_c)
 end
 
 """
 """
-function patch_convolution(W::AbstractArray{Float32}, patch::AbstractArray{Float32},
-                           k::Integer, p::Float32, q::Float32,
-                           out_c::Integer)
-    @tullio sk[b] := begin
-        # Average input values (channel-wise)
-        patch_mean[in_c, b] := patch[h, w, in_c, b] / (k * k)
-        patch_centered[h, w, in_c, b] := patch[w, h, in_c, b] - patch_mean[in_c]
+function patch_convolution(W, patch, k, p, q, out_c)
+    # function patch_convolution(W::AbstractArray, patch::AbstractArray,
+    #                            k::Integer, p::Float32, q::Float32,
+    #                            out_c::Integer)
 
-        # Second moment adjusted for q
-        patch_norm[in_c, b] := sqrt <| (patch[h, w, in_c, b] - patch_mean[in_c, b])^2
-        patch_norm[in_c, b] = Float32(patch_norm[in_c, b] + DEFAULT_ϵ + q)
+    # Average input values (channel-wise)
+    @tullio patch_mean[in_c, b] := patch[w, h, in_c, b] / ($k * $k)
 
-        # Average convolution kernel (channel-wise)
-        W_cur[w, h, in_c] := W[w, h, in_c, $out_c]
-        W_mean[in_c] := W_cur[w, h, in_c] / (k * k)
-        W_centered[h, w, in_c] := W_cur[w, h, in_c] - W_mean[in_c]
+    # Second moment adjusted for DEFAULT_ϵ and q
+    @tullio patch_centered[w, h, in_c, b] := patch[w, h, in_c, b] - patch_mean[in_c, b]
+    @tullio patch_norm[in_c, b] := sqrt <| (patch[w, h, in_c, b] - patch_mean[in_c, b])^2
 
-        # Second moment adjusted for q
-        W_norm[in_c] := sqrt <| (W_cur[w, h, in_c] - W_mean[in_c])^2
-        W_norm[in_c] = Float32(W_norm[in_c] + DEFAULT_ϵ + q)
+    # $ prefix is for constants with no gradient calculation
+    @tullio patch_norm[in_c, b] = Float32 <| (patch_norm[in_c, b] + $DEFAULT_ϵ + q)
 
-        # Calculate the sharpened cross-correlation for all channel combinations
-        # No loop to modify single values. Otherwise Zygote complains
-        # Note the transpose of the sum!!! Otherwise mismatch with col extraction
-        # Calculate the sharpened cross-correlation
-        (patch_centered[w, h, in_c, b] * W_centered[w, h, in_c]) /
-        (patch_norm[in_c, b] * W_norm[in_c])
-    end
+    # Average convolution kernel (channel-wise)
+    @tullio W_cur[w, h, in_c] := W[w, h, in_c, $out_c]
+    @tullio W_mean[in_c] := W_cur[w, h, in_c] / ($k * $k)
+    @tullio W_centered[w, h, in_c] := W_cur[w, h, in_c] - W_mean[in_c]
+
+    # Second moment adjusted for DEFAULT_ϵ + q
+    @tullio W_norm[in_c] := sqrt <| (W_cur[w, h, in_c] - W_mean[in_c])^2
+    @tullio W_norm[in_c] = Float32 <| (W_norm[in_c] + $DEFAULT_ϵ + q)
+
+    # Calculate the sharpened cross-correlation for all channel combinations
+    # No loop to modify single values. Otherwise Zygote complains
+    # Note the transpose of the sum!!! Otherwise mismatch with col extraction
+    # Calculate the sharpened cross-correlation
+
+    @tullio sk[b] := (patch_centered[w, h, in_c, b] * W_centered[w, h, in_c]) /
+                     (patch_norm[in_c, b] * W_norm[in_c])
 
     # Exponent maps -∞:+∞ to 0:+∞
     # return Float32(sign(sk) * (abs(sk))^log(1 + exp(p)))
@@ -138,7 +143,7 @@ end
 
 # 'Forwarding' function. Everything is differentiated.
 # Dimensions x: width x height x channels x batch
-function (sc::SharpenedConvolution)(x::Array{Float32,4})::Array{Float32}
+function (sc::SharpenedConvolution)(x::Array{Float32,4})
     # kernel matrix: kernel_size x kernel_size x in channels x out channel
     k, _, in_c, out_c = size(sc.W)
 
@@ -148,14 +153,14 @@ function (sc::SharpenedConvolution)(x::Array{Float32,4})::Array{Float32}
 
     s, p = sc.stride, sc.padding
     x_pad = PaddedView(0.0, x,
-                       (1:(in_w + 2 * p),     # new dimension along width
-                        1:(in_h + 2 * p),     # new dimension along height
-                        1:in_c,               # no change along channels
-                        1:batch),             # no change along batch
-                       ((1 + p):(in_w + p),   # from where to where to insert width
-                        (1 + p):(in_h + p),   # from where to where to insert height
-                        1:in_c,               # no change along channels
-                        1:batch))             # no change along batch
+        (1:(in_w+2*p),     # new dimension along width
+            1:(in_h+2*p),     # new dimension along height
+            1:in_c,               # no change along channels
+            1:batch),             # no change along batch
+        ((1+p):(in_w+p),   # from where to where to insert width
+            (1+p):(in_h+p),   # from where to where to insert height
+            1:in_c,               # no change along channels
+            1:batch))             # no change along batch
 
     _, _, iter_w, iter_h = convolved_dimensions(in_w, in_h, k, s, p)
 
@@ -171,7 +176,7 @@ end
 
 # Block of Sharpened Crosscorr -> Batch Normalization -> MaxPool
 function SC_Norm_Pool_Block(in_width::Integer, in_height::Integer,
-                            params_in::AbstractVector, params_out::AbstractVector)
+    params_in::AbstractVector, params_out::AbstractVector)
     in_chan, _, _, _, _ = params_in
     out_chan, sc_kernel, sc_stride, sc_padding, maxpool_out = params_out
 
@@ -191,9 +196,9 @@ function SC_Norm_Pool_Block(in_width::Integer, in_height::Integer,
                 """)
 
     return [SharpenedConvolution(in_width, in_height, in_chan, out_chan, sc_kernel,
-                                 sc_stride, sc_padding),
-            BatchNorm(out_chan),
-            AdaptiveMaxPool((maxpool_out, maxpool_out))]
+            sc_stride, sc_padding),
+        BatchNorm(out_chan),
+        AdaptiveMaxPool((maxpool_out, maxpool_out))]
 end
 
 struct HyperParameters
@@ -206,12 +211,12 @@ struct HyperParameters
     # n channels out, sharp kernel, sharp stride, sharp padding, size of adaptative max pooling
     block_params::Any
 
-    function HyperParameters(; batchsize=1_024, n_classes=10, n_epochs=100, n_runs=100,
-                             max_lr=0.01,
-                             block_params=Dict(1 => [3, 0, 0, 0],
-                                               2 => [16, 5, 2, 1, 16],
-                                               3 => [24, 5, 2, 1, 16],
-                                               4 => [48, 5, 2, 1, 16]))
+    function HyperParameters(; batchsize = 1_024, n_classes = 10, n_epochs = 100, n_runs = 100,
+        max_lr = 0.01,
+        block_params = Dict(1 => [3, 0, 0, 0],
+            2 => [16, 5, 2, 1, 16],
+            3 => [24, 5, 2, 1, 16],
+            4 => [48, 5, 2, 1, 16]))
         return new(batchsize, n_classes, n_epochs, n_runs, max_lr, block_params)
     end
 end
@@ -226,7 +231,7 @@ struct SharpenedCorrelationModel
     in_height::Integer
 
     function SharpenedCorrelationModel(ps::HyperParameters, in_width::Integer,
-                                       in_height::Integer)
+        in_height::Integer)
         return new(create_sc_model(ps, in_width, in_height), ps, in_width, in_height)
     end
 end
@@ -254,7 +259,7 @@ function create_sc_model(ps::HyperParameters, in_width::Integer, in_height::Inte
 
     width, height = in_width, in_height
     for i in 2:n_blocks
-        new_block = SC_Norm_Pool_Block(width, height, bp[i - 1], bp[i])
+        new_block = SC_Norm_Pool_Block(width, height, bp[i-1], bp[i])
         append!(blocks, new_block)
         width, height = new_block[1].out_width, new_block[1].out_height
     end
