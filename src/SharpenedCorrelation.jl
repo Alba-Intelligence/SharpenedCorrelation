@@ -6,8 +6,6 @@ using Tullio, PaddedViews
 
 using CUDA
 
-# using Functors, TensorCast,
-#using Zygote, NNlib
 using Flux
 using Flux: params
 using Flux: onehotbatch, onecold, flatten
@@ -26,8 +24,8 @@ if CUDA.has_cuda() && CUDA.has_cuda_gpu()
         using CuArrays, NNlibCUDA
         Training_Device = gpu
     catch ex
-        @warn "CUDA is installed, but CuArrays.jl fails to load. Defaulting to cpu " exception = (ex,
-                                                                                                  catch_backtrace())
+        @warn "CUDA installed, but CuArrays.jl fails to load. Defaulting to cpu " exception = (ex,
+            catch_backtrace())
         Training_Device = cpu
     end
 else
@@ -37,6 +35,6 @@ end
 include("model.jl")
 
 export HyperParameters,
-       SharpenedConvolution,
-       SharpenedCorrelationModel
+    SharpenedConvolution,
+    SharpenedCorrelationModel
 end
