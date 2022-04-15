@@ -64,8 +64,8 @@ Flux.trainable(s::SharpenedConvolution) = (s.W, s.p, s.q)
 function SharpenedConvolution(in_width::Integer, in_height::Integer,
     in_chan::Integer, out_chan::Integer,
     kernel::Integer, stride::Integer, padding::Integer;
-    p = 1.0f0::Float32, q = 0.1f0::Float32,
-    init = Flux.glorot_uniform)
+    p=1.0f0::Float32, q=0.1f0::Float32,
+    init=Flux.glorot_uniform)
 
     # Allocate the result tensor. width and height reflect the number of convolutions over the input
     # accounting for padding and stride.
@@ -94,7 +94,7 @@ Returns:
 function channels_convolution(W::Array{Float32}, input_padded::Any, k::Integer,
     p::Float32, q::Float32,
     v_w::Integer, v_h::Integer, out_c::Integer)
-    batch_size = size(input_padded)[end]
+    # batch_size = size(input_padded)[end]
     # # input_patch = make_view(input_padded, v_w, v_h, k, batch_size)
     # input_patch = @view input_padded[v_w:(v_w+k-1), v_h:(v_h+k-1), 1:end, 1:batch_size]
 
@@ -120,19 +120,20 @@ function patch_convolution(W::AbstractArray, patch::AbstractArray,
     @tullio patch_norm[in_c, b] := sqrt <| (patch[w, h, in_c, b] - patch_mean[in_c, b])^2
 
     # $ prefix is for constants with no gradient calculation
-    patch_norm .+= DEFAULT_ϵ + q
-    patch_norm = Float32.(patch_norm)
+    @. patch_norm += DEFAULT_ϵ + q
+    @. patch_norm = Float32(patch_norm)
     # Average convolution kernel (channel-wise)
 
     # Average convolution kernel (channel-wise)
+    # $ prefix is for constants with no gradient calculation
     @tullio W_cur[w, h, in_c] := W[w, h, in_c, $out_c]
     @tullio W_mean[in_c] := W_cur[w, h, in_c] / ($k * $k)
     @tullio W_centered[w, h, in_c] := W_cur[w, h, in_c] - W_mean[in_c]
 
     # Second moment adjusted for DEFAULT_ϵ + q
     @tullio W_norm[in_c] := sqrt <| (W_cur[w, h, in_c] - W_mean[in_c])^2
-    W_norm .+= DEFAULT_ϵ + q
-    W_norm = Float32.(W_norm)
+    @. W_norm += DEFAULT_ϵ + q
+    @. W_norm = Float32(W_norm)
 
     # Calculate the sharpened cross-correlation for all channel combinations
     # No loop to modify single values. Otherwise Zygote complains
@@ -195,12 +196,12 @@ function (sc::SharpenedConvolution)(x::Array{Float32})
 
     s, p = sc.stride, sc.padding
     x_pad = PaddedView(0.0, x,
-        (1:(in_w+2*p),     # new dimension along width
-         1:(in_h+2*p),     # new dimension along height
-         1:in_c, 1:n_b),          # no change along channels
-        ((1+p):(in_w+p),   # from where to where to insert width
-         (1+p):(in_h+p),   # from where to where to insert height
-             1:in_c, 1:n_b))      # no change along channels
+        (1:(in_w+2*p),        # new dimension along width
+            1:(in_h+2*p),     # new dimension along height
+            1:in_c, 1:n_b),   # no change along channels
+        ((1+p):(in_w+p),      # from where to where to insert width
+            (1+p):(in_h+p),   # from where to where to insert height
+            1:in_c, 1:n_b))   # no change along channels
 
     _, _, iter_w, iter_h = convolved_dimensions(in_w, in_h, k, s, p)
 
@@ -244,8 +245,10 @@ function (sc::SharpenedConvolution)(x::Array{Float32})
 end
 
 # Block of Sharpened Crosscorr -> Batch Normalization -> MaxPool
-function SC_Norm_Pool_Block(in_width::Integer, in_height::Integer,
+function SC_Norm_Pool_Block(
+    in_width::Integer, in_height::Integer,
     params_in::AbstractVector, params_out::AbstractVector)
+
     in_chan, _, _, _, _ = params_in
     out_chan, sc_kernel, sc_stride, sc_padding, maxpool_out = params_out
 
@@ -258,16 +261,17 @@ function SC_Norm_Pool_Block(in_width::Integer, in_height::Integer,
     #     dimensions out: output_width, output_height, out channels, batch
     #
     println("""
-                Creating block with output dimension of the SC layer:
-                width in = $(in_width) x height in $(in_height)
-                channels in $(in_chan) - out channels $(out_chan)
+            Creating block with output dimension of the SC layer:
+            width in = $(in_width) x height in $(in_height)
+            channels in $(in_chan) - out channels $(out_chan)
 
-                """)
+            """)
 
-    return [SharpenedConvolution(in_width, in_height, in_chan, out_chan, sc_kernel,
-            sc_stride, sc_padding),
-        BatchNorm(out_chan, relu; affine = true),
-        AdaptiveMaxPool((maxpool_out, maxpool_out))]
+    return [
+        SharpenedConvolution(in_width, in_height, in_chan, out_chan, sc_kernel, sc_stride, sc_padding),
+        BatchNorm(out_chan, relu; affine=true, track_stats=true),
+        AdaptiveMaxPool((maxpool_out, maxpool_out))
+    ]
 end
 
 struct HyperParameters
@@ -280,9 +284,9 @@ struct HyperParameters
     # n channels out, sharp kernel, sharp stride, sharp padding, size of adaptative max pooling
     block_params::Any
 
-    function HyperParameters(; batchsize = 1_024, n_classes = 10, n_epochs = 100, n_runs = 100,
-        max_lr = 0.01,
-        block_params = Dict(1 => [3, 0, 0, 0],
+    function HyperParameters(; batchsize=1_024, n_classes=10, n_epochs=100, n_runs=100,
+        max_lr=0.01,
+        block_params=Dict(1 => [3, 0, 0, 0],
             2 => [16, 5, 2, 1, 16],
             3 => [24, 5, 2, 1, 16],
             4 => [48, 5, 2, 1, 16]))

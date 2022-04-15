@@ -1,6 +1,5 @@
 pwd()
-using Pkg;
-Pkg.activate(".");
+using Pkg; Pkg.activate(@__DIR__);
 
 using SharpenedCorrelation, Debugger
 using Flux, MLDatasets, ImageCore, PaddedViews
