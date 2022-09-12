@@ -12,7 +12,7 @@ using Flux: onehotbatch, onecold, flatten
 using Flux.Losses: logitcrossentropy
 using Flux.Data: DataLoader
 
-using BenchmarkTools
+# using BenchmarkTools
 
 if CUDA.has_cuda()
     @info "CUDA is on"

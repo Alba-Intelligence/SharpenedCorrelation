@@ -105,16 +105,36 @@
 
 # In[1]:
 
-cd(@__DIR__); using Revise, Pkg; Pkg.activate(@__DIR__);
+pkg_path = normpath(joinpath(@__DIR__, ".."))
+cd(pkg_path)
 
+using Pkg
+Pkg.activate(; temp = true)
+
+# Speed up by avoiding updating the repository when adding packages
+Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
+
+# Add useful package
+Pkg.add([
+    "Revise",
+    "ProgressMeter",
+    "BenchmarkTools",
+    "Debugger",
+    "Images",
+    "Flux",
+    "MLDatasets",
+    "ImageCore",
+    "PaddedViews",
+])
+
+using Revise,
+    ProgressMeter, BenchmarkTools, Debugger, Images, Flux, MLDatasets, ImageCore, PaddedViews
 
 # In[2]:
 
+Pkg.develop(path = pkg_path)
 
-using ProgressMeter
-using BenchmarkTools
-using Flux
-using MLDatasets
+using SharpenedCorrelation
 
 
 # We here only use the MNIST dataset described in [https://juliaml.github.io/MLDatasets.jl/stable](). If not already available in `~/.julia/datadeps/`, it will be automatically downloaded. Some `MLDataSets` request accepting the terms of use. If a prompt appears, type `y` + `Enter`.
@@ -130,30 +150,9 @@ using MLDatasets
 using ImageCore
 
 
-# In[4]:
-
-
-MNIST.convert2image(MNIST.traintensor(1))
-
-
-# In[5]:
-
-
-MNIST.trainlabels(1)
-
-
-# In[6]:
-
-
-size(MNIST.testtensor())
-
-
-# In[7]:
-
-
 # Let's use global variables to easily use other datasets
-WIDTH, HEIGHT, N_TRAIN_SAMPLE = size(MNIST.traintensor());
-_, _, N_TEST_SAMPLE = size(MNIST.testtensor());
+WIDTH, HEIGHT, N_TRAIN_SAMPLE = size(MNIST(split = :train).features);
+_, _, N_TEST_SAMPLE = size(MNIST(split = :test).features);
 N_CHANNELS = 1;
 
 
@@ -161,9 +160,10 @@ N_CHANNELS = 1;
 
 # In[8]:
 
-
-train_x, train_y = MNIST.traindata(Float32);
-test_x, test_y = MNIST.testdata(Float32);
+train_x = MNIST(split = :train).features;
+train_y = MNIST(split = :train).targets;
+test_x = MNIST(split = :test).features;
+test_y = MNIST(split = :test).targets;
 
 
 # In[9]:
@@ -174,8 +174,8 @@ train_x = reshape(train_x, WIDTH, HEIGHT, N_CHANNELS, N_TRAIN_SAMPLE);
 test_x = reshape(test_x, WIDTH, HEIGHT, N_CHANNELS, N_TEST_SAMPLE);
 
 # reencode the labels as One-Hot
-train_y, test_y = Flux.onehotbatch(train_y, 0:9), Flux.onehotbatch(test_y, 0:9);
-
+train_y = Flux.onehotbatch(train_y, 0:9);
+test_y = Flux.onehotbatch(test_y, 0:9);
 
 # `train_x` and `train_y` are functions that deliver the data. They are combined into a data loader.
 
@@ -184,8 +184,10 @@ train_y, test_y = Flux.onehotbatch(train_y, 0:9), Flux.onehotbatch(test_y, 0:9);
 
 # Create DataLoaders (mini-batch iterators)
 BATCH_SIZE = 256;
-train_loader = Flux.DataLoader((data=train_x, label=train_y), batchsize=BATCH_SIZE, shuffle=true);
-test_loader = Flux.DataLoader((data=test_x, label=test_y), batchsize=BATCH_SIZE, shuffle=false);
+train_loader =
+    Flux.DataLoader((data = train_x, label = train_y), batchsize = BATCH_SIZE, shuffle = true);
+test_loader =
+    Flux.DataLoader((data = test_x, label = test_y), batchsize = BATCH_SIZE, shuffle = false);
 
 
 # ## Sharpened Cross-correlation Similarity
@@ -195,41 +197,13 @@ test_loader = Flux.DataLoader((data=test_x, label=test_y), batchsize=BATCH_SIZE,
 # In[12]:
 
 
-# using Pkg; Pkg.activate(".");
-
 using Debugger
 using Flux, MLDatasets, ImageCore, PaddedViews
-
-train_x, train_y = MNIST.traindata(Float32);
-test_x, test_y = MNIST.testdata(Float32);
-
-# Let's use global variables to easily use other datasets
-WIDTH, HEIGHT, N_TRAIN_SAMPLE = size(MNIST.traintensor());
-_, _, N_TEST_SAMPLE = size(MNIST.testtensor());
-N_CHANNELS = 1;
-
-# Insert a channel dimension for the MNIST dataset
-train_x = reshape(train_x, WIDTH, HEIGHT, N_CHANNELS, N_TRAIN_SAMPLE);
-test_x = reshape(test_x, WIDTH, HEIGHT, N_CHANNELS, N_TEST_SAMPLE);
-
-# reencode the labels as One-Hot
-train_y, test_y = Flux.onehotbatch(train_y, 0:9), Flux.onehotbatch(test_y, 0:9);
-
-
-# Create DataLoaders (mini-batch iterators)
-BATCH_SIZE = 256;
-train_loader = Flux.DataLoader((data=train_x, label=train_y), batchsize=BATCH_SIZE, shuffle=true);
-test_loader = Flux.DataLoader((data=test_x, label=test_y), batchsize=BATCH_SIZE, shuffle=false);
 
 data, label = first(train_loader);
 
 
 # In[20]:
-
-
-using Debugger
-using SharpenedCorrelation
-
 
 # Let's create a single Sharpened Cosine Transform with a single B&W input channel yielding 8 output channels. The other 3 parameters are the kernel size, padding width around an image (padded at 0,0), and the stride.
 
@@ -265,15 +239,13 @@ model_params = HyperParameters(;
     n_classes = size(train_y)[1],
     n_epochs = 100,
     n_runs = 500,
-    block_params = Dict(
-        1 => [1,   0, 0, 0, 0],
-        2 => [24,  5, 2, 1, 8]))
+    block_params = Dict(1 => [1, 0, 0, 0, 0], 2 => [24, 5, 2, 1, 8]),
+)
 
 
 # We create a full model.
 
 # In[15]:
-
 
 sc = SharpenedCorrelationModel(model_params, WIDTH, HEIGHT)
 
@@ -314,9 +286,9 @@ function loss_and_accuracy(data_loader, model, device)
     for (x, y) in data_loader
         x, y = device(x), device(y)
         ŷ = model(x)
-        loss += Flux.Losses.logitcrossentropy(ŷ, y, agg=sum)
+        loss += Flux.Losses.logitcrossentropy(ŷ, y, agg = sum)
         accuracy += sum(onecold(ŷ) .== onecold(y))
-        count +=  size(x)[end]
+        count += size(x)[end]
     end
     return loss / count, accuracy / count
 end
@@ -386,7 +358,7 @@ gradient(() -> Flux.Losses.logitcrossentropy(sc(data), label), ps)
 
 ## Training
 # @showprogress for epoch in 1:model_params.n_epochs
-@showprogress for epoch in 1:2
+@showprogress for epoch = 1:2
     for (data, label) in train_loader
         # Transfer data to device - Uncomment to use automatic detection in the package
         # data, label = SCS.Training_Device(data), SCS.Training_Device(label)
